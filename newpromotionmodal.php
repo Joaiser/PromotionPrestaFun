@@ -115,7 +115,7 @@ class NewPromotionModal extends Module
             return $this->display(__FILE__, 'views/templates/hook/promotionModal.tpl');
         }
 
-        // Si no cumple las condiciones de la promoción, no mostrar nada
+        // Si no cumple las condiciones de la promoción, no mostrar nada de nada
         return '';
     }
 }
