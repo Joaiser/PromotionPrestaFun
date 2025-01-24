@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<module>
+    <name>newpromotionmodal</name>
+    <displayName>New Promotion Modal</displayName>
+    <version>1.0.0</version>
+    <author>Aitor</author>
+    <tab>front_office_features</tab>
+    <description>Muestra un modal con las promociones cuando el cliente cumpla las condiciones del pedido.</description>
+    <is_configurable>0</is_configurable>
+</module>
