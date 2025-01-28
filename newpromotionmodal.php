@@ -40,17 +40,6 @@ class NewPromotionModal extends Module
             `date_add` DATETIME NOT NULL
         ) ENGINE='._MYSQL_ENGINE_.' DEFAULT CHARSET=utf8;';
 
-        /*CREATE TABLE IF NOT EXISTS `ps_promotion_modal_log` (
-    `id_log` INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-    `id_customer` INT UNSIGNED NOT NULL,
-    `id_order` INT UNSIGNED NOT NULL,
-    `order_total` DECIMAL(10, 2) NOT NULL,
-    `modal_shown` TINYINT(1) NOT NULL DEFAULT 0,
-    `firstname` VARCHAR(255) NOT NULL,
-    `lastname` VARCHAR(255) NOT NULL,
-    `date_add` DATETIME NOT NULL
-) ENGINE=InnoDB DEFAULT CHARSET=utf8;
-        */
 
         if (!Db::getInstance()->execute($sql)) {
             return false;
