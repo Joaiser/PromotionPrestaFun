@@ -36,4 +36,8 @@ document.addEventListener("DOMContentLoaded", function () {
         date.setTime(date.getTime() + days * 24 * 60 * 60 * 1000);
         document.cookie = `${name}=${value};path=/;expires=${date.toUTCString()}`;
     }
+<<<<<<< HEAD
 });
+=======
+});
+>>>>>>> dea31c5 (Modulo hecho con bd y acabado)

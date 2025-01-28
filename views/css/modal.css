@@ -1,6 +1,10 @@
 #promotionModal {
     position: fixed; /* Fijado en la pantalla */
+<<<<<<< HEAD
     z-index: 20; /* Asegura que esté por encima de otros elementos */
+=======
+    z-index: 200; /* Asegura que esté por encima de otros elementos */
+>>>>>>> dea31c5 (Modulo hecho con bd y acabado)
     left: 0;
     top: 0;
     width: 100%;
@@ -47,4 +51,8 @@
         opacity: 1;
         transform: scale(1);
     }
+<<<<<<< HEAD
 }
+=======
+}
+>>>>>>> dea31c5 (Modulo hecho con bd y acabado)
