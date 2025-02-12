@@ -20,34 +20,39 @@ class NewPromotionModal extends Module
         $this->description = $this->l('Muestra un modal cuando un cliente haga un pedido que cumpla las condiciones de promoción');
     }
 
+
     public function install()
-    {
-        if (!parent::install() || 
-            !$this->registerHook('actionValidateOrder') || 
-            !$this->registerHook('displayHeader')) {
-            error_log('Hook registration failed.');
-            return false;
-        }
-
-        $sql = 'CREATE TABLE IF NOT EXISTS `'._DB_PREFIX_.'promotion_modal_log` (
-            `id_log` INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-            `id_customer` INT UNSIGNED NOT NULL,
-            `id_order` INT UNSIGNED NOT NULL,
-            `order_total` DECIMAL(10, 2) NOT NULL,
-            `modal_shown` TINYINT(1) NOT NULL DEFAULT 0,
-            `firstname` VARCHAR(255) NOT NULL,
-            `lastname` VARCHAR(255) NOT NULL,
-            `date_add` DATETIME NOT NULL
-        ) ENGINE='._MYSQL_ENGINE_.' DEFAULT CHARSET=utf8;';
-
-
-        if (!Db::getInstance()->execute($sql)) {
-            return false;
-        }
-
-        error_log('Hooks registered successfully.');
-        return true;
+{
+    if (!parent::install()
+        || !$this->registerHook('actionCartSave')
+        || !$this->registerHook('actionValidateOrder')
+        || !$this->registerHook('displayHeader')) {
+        error_log('Hook registration failed.');
+        return false;
     }
+
+    // Crear la tabla en la base de datos
+    $sql = 'CREATE TABLE IF NOT EXISTS `'._DB_PREFIX_.'promotion_modal_log` (
+        `id_log` INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        `id_customer` INT UNSIGNED NOT NULL,
+        `id_order` INT UNSIGNED NOT NULL,
+        `order_total` DECIMAL(10, 2) NOT NULL,
+        `last_group_default` INT UNSIGNED NOT NULL,
+        `modal_shown` TINYINT(1) NOT NULL DEFAULT 0,
+        `firstname` VARCHAR(255) NOT NULL,
+        `lastname` VARCHAR(255) NOT NULL,
+        `date_add` DATETIME NOT NULL
+    ) ENGINE='._MYSQL_ENGINE_.' DEFAULT CHARSET=utf8;';
+
+    if (!Db::getInstance()->execute($sql)) {
+        error_log('Failed to create table.');
+        return false;
+    }
+
+    error_log('Module installed successfully.');
+    return true;
+}
+
 
     public function uninstall()
     {
@@ -78,75 +83,173 @@ class NewPromotionModal extends Module
     ];
 
     private function getOrderTotalForPromotion($customerId)
-    {
-        $sql = 'SELECT 
-                    od.id_order,
-                    SUM(od.product_price * od.product_quantity) AS total_price
-                FROM '._DB_PREFIX_.'order_detail od
-                JOIN '._DB_PREFIX_.'orders o ON od.id_order = o.id_order
-                WHERE o.id_customer = '.(int)$customerId.' 
-                AND od.product_reference IN ("'.implode('","', self::PROMOTION_REFERENCES).'")
-                GROUP BY od.id_order
-                ORDER BY o.date_add DESC
-                LIMIT 1';
+{
+    $sql = 'SELECT 
+                o.id_order,
+                o.total_paid AS total_price
+            FROM '._DB_PREFIX_.'orders o
+            JOIN '._DB_PREFIX_.'order_detail od ON o.id_order = od.id_order
+            WHERE o.id_customer = '.(int)$customerId.' 
+            AND od.product_reference IN ("'.implode('","', self::PROMOTION_REFERENCES).'")
+            AND o.current_state IN (2, 3, 5) -- Estados de pago aceptado, en preparación, enviado (ajusta según tu configuración)
+            GROUP BY o.id_order
+            ORDER BY o.date_add DESC
+            LIMIT 1';
 
-        return Db::getInstance()->executeS($sql);
+    return Db::getInstance()->executeS($sql);
+}
+
+
+    private function insertPromotionLog($customerId, $orderId, $totalPrice,$defaultGroup, $firstname, $lastname)
+{
+    // Insertar en la tabla con la nueva columna `last_group_default`
+    $sqlInsert = 'INSERT INTO '._DB_PREFIX_.'promotion_modal_log 
+                  (id_customer, id_order, order_total, last_group_default, modal_shown, firstname, lastname, date_add) 
+                  VALUES (
+                      '.(int)$customerId.', 
+                      '.(int)$orderId.', 
+                      '.(float)$totalPrice.', 
+                      '.(int)$defaultGroup.',  
+                      0, 
+                      "'.pSQL($firstname).'", 
+                      "'.pSQL($lastname).'", 
+                      NOW()
+                  )';
+
+    Db::getInstance()->execute($sqlInsert);
+}
+
+public function addCustomerToGroup9($customerId)
+{
+    if (!$customerId) {
+        return false;
     }
 
-    private function insertPromotionLog($customerId, $orderId, $totalPrice, $firstname, $lastname)
-    {
-        $sqlInsert = 'INSERT INTO '._DB_PREFIX_.'promotion_modal_log 
-                      (id_customer, id_order, order_total, modal_shown, firstname, lastname, date_add) 
-                      VALUES (
-                          '.(int)$customerId.', 
-                          '.(int)$orderId.', 
-                          '.(float)$totalPrice.', 
-                          0, 
-                          "'.pSQL($firstname).'", 
-                          "'.pSQL($lastname).'", 
-                          NOW()
-                      )';
+    $sql = 'INSERT INTO '._DB_PREFIX_.'customer_group (id_customer, id_group) 
+            VALUES ('.(int)$customerId.', 9)';
 
-        Db::getInstance()->execute($sqlInsert);
+    $result = Db::getInstance()->execute($sql);
+
+    return $result;
+}
+
+
+public function removeCustomerFromGroup9($customerId)
+{
+    if (!$customerId) {
+        return false;
     }
 
-    public function hookActionValidateOrder($params)
-    {
-        if (!isset($params['order'])) {
-            return;
+    $sql = 'DELETE FROM '._DB_PREFIX_.'customer_group 
+            WHERE id_customer = '.(int)$customerId.' 
+            AND id_group = 9';
+
+    return Db::getInstance()->execute($sql);
+}
+
+public function hookActionCartSave($params)
+{
+    $context = Context::getContext();
+    $id_cliente = $context->customer->id;
+
+
+    if (!$id_cliente) {
+        return;
+    }
+
+    if ($this->isCustomerAlreadyRegistered($id_cliente)) {
+        return;
+    }
+
+    $cart = $context->cart;
+
+    if (!Validate::isLoadedObject($cart)) {
+        return;
+    }
+
+    // Obtener productos del carrito
+    $products = $cart->getProducts();
+    $totalCart = 0;
+
+    // ID de la categoría de promoción
+    $promotionCategoryId = 30;
+
+    foreach ($products as $product) {
+        $id_product = (int) $product['id_product'];
+
+        // Verificar si el producto pertenece a la categoría de promoción
+        if ($this->isProductInCategory($id_product, $promotionCategoryId)) {
+            $totalCart = $cart->getOrderTotal(true, Cart::BOTH);
         }
+    }
 
-        $order = $params['order'];
-        $customerId = $order->id_customer;
-        $orderId = $order->id;
 
-        if ($this->isCustomerAlreadyRegistered($customerId)) {
-            return;
-        }
+    // Si el total del carrito filtrado es menor a 1200€, el cliente se elimina del grupo 9
+    if ($totalCart < 1200) {
+        $this->removeCustomerFromGroup9($id_cliente);
+        return;
+    }
 
-        $result = $this->getOrderTotalForPromotion($customerId);
+    // Si el total del carrito filtrado es mayor o igual a 1200€, el cliente se añade al grupo 9
+    $this->addCustomerToGroup9($id_cliente);
+}
 
-        if (!empty($result)) {
-            $totalPrice = (float)$result[0]['total_price'];
+private function isProductInCategory($id_product, $id_category)
+{
 
-            if ($totalPrice > 2000) {
-                $this->context->cookie->__set('promotion_modal_message', '¡Felicidades! Has alcanzado las condiciones de la promoción de lote 16.');
-                $this->context->cookie->__set('promotion_modal', true);
-            } elseif ($totalPrice > 1200) {
-                $firstname = $this->context->customer->firstname;
-                $lastname = $this->context->customer->lastname;
+    $sql = 'SELECT COUNT(*) FROM `' . _DB_PREFIX_ . 'category_product` 
+            WHERE `id_product` = ' . (int) $id_product . ' 
+            AND `id_category` = ' . (int) $id_category;
+    $result = (bool) Db::getInstance()->getValue($sql);
 
-                $this->insertPromotionLog($customerId, $orderId, $totalPrice, $firstname, $lastname);
 
-                $this->context->cookie->__set('promotion_modal_message', '¡Felicidades! Has alcanzado las condiciones de la promoción de lote 8.');
-                $this->context->cookie->__set('promotion_modal', true);
-            } else {
-                $this->context->cookie->__set('promotion_modal', false);
-            }
+    return $result;
+}
+
+
+
+
+public function hookActionValidateOrder($params)
+{
+    if (!isset($params['order'])) {
+        return;
+    }
+
+    $order = $params['order'];
+    $customerId = $order->id_customer;
+    $orderId = $order->id;
+
+    if ($this->isCustomerAlreadyRegistered($customerId)) {
+        return;
+    }
+
+    // Obtener el id_default_group del cliente
+    $sqlGroup = 'SELECT id_default_group FROM '._DB_PREFIX_.'customer WHERE id_customer = '.(int)$customerId;
+    $defaultGroup = Db::getInstance()->getValue($sqlGroup);
+
+    $result = $this->getOrderTotalForPromotion($customerId);
+
+    if (!empty($result)) {
+        $totalPrice = (float)$result[0]['total_price'];
+        $firstname = $this->context->customer->firstname;
+        $lastname = $this->context->customer->lastname;
+
+        if ($totalPrice >= 2000) {
+            $this->insertPromotionLog($customerId, $orderId, $totalPrice, $defaultGroup, $firstname, $lastname);
+            $this->context->cookie->__set('promotion_modal_message', '¡Felicidades! Has alcanzado las condiciones de la promoción de lote 16.');
+            $this->context->cookie->__set('promotion_modal', true);
+        } elseif ($totalPrice >= 1200) {
+            $this->insertPromotionLog($customerId, $orderId, $totalPrice, $defaultGroup, $firstname, $lastname);
+            $this->context->cookie->__set('promotion_modal_message', '¡Felicidades! Has alcanzado las condiciones de la promoción de lote 8.');
+            $this->context->cookie->__set('promotion_modal', true);
         } else {
             $this->context->cookie->__set('promotion_modal', false);
         }
+    } else {
+        $this->context->cookie->__set('promotion_modal', false);
     }
+}
+
 
     private function updateModalShown($customerId)
 {
